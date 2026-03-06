@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkiOx Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f8f9fa; }
+        .card-spo2 { transition: all 0.3s; }
+        .card-critical {
+            background: #dc3545 !important;
+            color: #fff !important;
+            animation: pulse 1s infinite;
+        }
+        .card-critical .card-title,
+        .card-critical .display-4,
+        .card-critical small { color: #fff !important; }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(220,53,69,0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(220,53,69,0); }
+            100% { box-shadow: 0 0 0 0 rgba(220,53,69,0); }
+        }
+        .valve-on { color: #198754; font-weight: bold; }
+        .valve-off { color: #6c757d; }
+        .status-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+            background: #198754;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink { 50% { opacity: 0.5; } }
+        .header {
+            background: linear-gradient(135deg, #0d6efd, #0dcaf0);
+            color: #fff;
+            padding: 1.5rem 0;
+            margin-bottom: 1.5rem;
+        }
+        .metric-card {
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .history-box {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            padding: 1.25rem;
+        }
+        .alert-top {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 1050;
+            border-radius: 0;
+        }
+        .alert-top.show { display: block; }
+    </style>
+</head>
+<body>
+    <div id="alertBanner" class="alert alert-danger alert-top text-center mb-0">
+        <strong>⚠️ EMERGENCY:</strong> SpO₂ critically low!
+    </div>
+
+    <div class="header">
+        <div class="container d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="mb-0">SkiOx Dashboard</h1>
+                <small class="opacity-75">Emergency Oxygen Monitoring</small>
+            </div>
+            <div class="text-end">
+                <span class="status-dot"></span>
+                <span id="deviceId">{{ latest.device_id|default:"--" }}</span><br>
+                <small id="lastUpdate">{{ latest.timestamp|date:"M d, H:i:s"|default:"No data" }}</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="row g-3 mb-4">
+            <div class="col-md-3 col-6">
+                <div id="spo2Card" class="card metric-card card-spo2 h-100 {% if is_critical %}card-critical{% endif %}">
+                    <div class="card-body text-center">
+                        <h6 class="card-title text-muted">SpO₂</h6>
+                        <p class="display-4 mb-0" id="spo2Value">{{ latest.spo2|default:"--" }}</p>
+                        <small class="text-muted">%</small>
+                        <div id="spo2Alert" class="mt-2 {% if not is_critical %}d-none{% endif %}">
+                            <span class="badge bg-light text-danger">CRITICAL</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card metric-card h-100">
+                    <div class="card-body text-center">
+                        <h6 class="card-title text-muted">Heart Rate</h6>
+                        <p class="display-4 mb-0 text-danger" id="heartRateValue">{{ latest.heart_rate|default:"--" }}</p>
+                        <small class="text-muted">BPM</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card metric-card h-100">
+                    <div class="card-body text-center">
+                        <h6 class="card-title text-muted">Valve</h6>
+                        <p class="display-4 mb-0" id="valveStatus">
+                            {% if latest.valve_status %}<span class="valve-on">ON</span>{% else %}<span class="valve-off">OFF</span>{% endif %}
+                        </p>
+                        <small class="text-muted">O₂ Delivery</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card metric-card h-100">
+                    <div class="card-body text-center">
+                        <h6 class="card-title text-muted">Battery</h6>
+                        <p class="display-4 mb-0 text-success" id="batteryValue">{{ latest.battery|default:"--" }}</p>
+                        <small class="text-muted">%</small>
+                        <div class="progress mt-2" style="height:6px">
+                            <div id="batteryBar" class="progress-bar bg-success" style="width:{{ latest.battery|default:0 }}%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="history-box">
+            <h5 class="mb-3">Recent Readings</h5>
+            <div class="table-responsive">
+                <table class="table table-hover table-sm">
+                    <thead class="table-light">
+                        <tr><th>Time</th><th>SpO₂</th><th>HR</th><th>Valve</th><th>Batt</th></tr>
+                    </thead>
+                    <tbody id="historyTable">
+                        {% for r in history %}
+                        <tr {% if r.spo2 < critical_threshold %}class="table-danger"{% endif %}>
+                            <td>{{ r.timestamp|date:"M d, H:i:s" }}</td>
+                            <td>{{ r.spo2 }}</td>
+                            <td>{{ r.heart_rate }}</td>
+                            <td>{% if r.valve_status %}<span class="badge bg-success">ON</span>{% else %}<span class="badge bg-secondary">OFF</span>{% endif %}</td>
+                            <td>{{ r.battery }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" class="text-center text-muted">No data yet</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <footer class="text-center text-muted py-3">
+            <small>SkiOx &copy; 2026 | Refreshes every 5s</small>
+        </footer>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const THRESHOLD = 90;
+
+        function fmtDate(d) {
+            let dt = new Date(d);
+            return dt.toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+        }
+
+        function refresh() {
+            fetch('/api/latest/').then(r => r.ok ? r.json() : Promise.reject()).then(d => {
+                document.getElementById('spo2Value').textContent = d.spo2.toFixed(1);
+                document.getElementById('heartRateValue').textContent = Math.round(d.heart_rate);
+                document.getElementById('valveStatus').innerHTML = d.valve_status ? '<span class="valve-on">ON</span>' : '<span class="valve-off">OFF</span>';
+                document.getElementById('batteryValue').textContent = d.battery.toFixed(1);
+                document.getElementById('batteryBar').style.width = d.battery + '%';
+                document.getElementById('batteryBar').className = 'progress-bar ' + (d.battery < 20 ? 'bg-danger' : d.battery < 50 ? 'bg-warning' : 'bg-success');
+                document.getElementById('deviceId').textContent = d.device_id;
+                document.getElementById('lastUpdate').textContent = fmtDate(d.timestamp);
+
+                let card = document.getElementById('spo2Card');
+                let alert = document.getElementById('spo2Alert');
+                let banner = document.getElementById('alertBanner');
+                if (d.spo2 < THRESHOLD) {
+                    card.classList.add('card-critical');
+                    alert.classList.remove('d-none');
+                    banner.classList.add('show');
+                } else {
+                    card.classList.remove('card-critical');
+                    alert.classList.add('d-none');
+                    banner.classList.remove('show');
+                }
+            }).catch(() => {});
+
+            fetch('/api/history/').then(r => r.json()).then(data => {
+                let html = '';
+                if (!data.length) {
+                    html = '<tr><td colspan="5" class="text-center text-muted">No data yet</td></tr>';
+                } else {
+                    data.forEach(r => {
+                        let cls = r.spo2 < THRESHOLD ? 'table-danger' : '';
+                        let valve = r.valve_status ? '<span class="badge bg-success">ON</span>' : '<span class="badge bg-secondary">OFF</span>';
+                        html += '<tr class="'+cls+'"><td>'+fmtDate(r.timestamp)+'</td><td>'+r.spo2+'</td><td>'+r.heart_rate+'</td><td>'+valve+'</td><td>'+r.battery+'</td></tr>';
+                    });
+                }
+                document.getElementById('historyTable').innerHTML = html;
+            }).catch(() => {});
+        }
+
+        refresh();
+        setInterval(refresh, 5000);
+    </script>
+</body>
+</html>
